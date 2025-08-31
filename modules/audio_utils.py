@@ -13,7 +13,7 @@ import os
 
 # Se asume que la función buscar_archivos está definida en file_utils.py
 from modules.character_manager import get_personajes_features
-from modules.file_utils import buscar_archivos
+from modules.file_utils import buscar_archivos, buscar_en_indice
 from config import AUDIO_PATH, valor_A, valor_B
 
 def get_dict_voces():
@@ -83,7 +83,7 @@ def extraer_informacion_audio(ruta):
     return detalles_audio
 
 
-def get_sonidos_rutas(sonidos_personas, audio_path = AUDIO_PATH):
+def get_sonidos_rutas(sonidos_personas, audio_path=AUDIO_PATH, indice=None):
     """
     Dado un diccionario de sonidos (con nombres y rutas o lista de rutas),
     busca los archivos de audio en la ruta especificada en 'audio_path' utilizando
@@ -102,22 +102,23 @@ def get_sonidos_rutas(sonidos_personas, audio_path = AUDIO_PATH):
     for key, v in sonidos_personas.items():
         ls_rutas = []
         if isinstance(v, list):
-            for x in v:
-                x_agender = x.replace(' (man)', '').replace(' (woman)', '') \
-                             .replace(' (men)', '').replace(' (women)', '')
-                res_ = buscar_archivos(audio_path, x_agender)
-                if len(res_) == 0:
-                    print(key, ":_", x)
-                else:
-                    ls_rutas.append(extraer_informacion_audio(res_[0]))
+            nombres = v
         else:
-            v_agender = v.replace(' (man)', '').replace(' (woman)', '') \
-                         .replace(' (men)', '').replace(' (women)', '')
-            res_ = buscar_archivos(audio_path, v_agender)
+            nombres = [v]
+
+        for nombre in nombres:
+            nombre_agender = nombre.replace(' (man)', '').replace(' (woman)', '') \
+                                    .replace(' (men)', '').replace(' (women)', '')
+            if indice is not None:
+                res_ = buscar_en_indice(indice, nombre_agender)
+            else:
+                res_ = buscar_archivos(audio_path, nombre_agender)
+
             if len(res_) == 0:
-                print(key, ":", v)
+                print(key, ":" if not isinstance(v, list) else ":_", nombre)
             else:
                 ls_rutas.append(extraer_informacion_audio(res_[0]))
+
         sonidos_rutas[key] = ls_rutas
     return sonidos_rutas
 
