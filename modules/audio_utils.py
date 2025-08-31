@@ -16,6 +16,10 @@ from modules.character_manager import get_personajes_features
 from modules.file_utils import buscar_archivos, buscar_en_indice
 from config import AUDIO_PATH, valor_A, valor_B
 
+# Caches para reducir accesos repetidos al disco
+_audio_info_cache = {}
+_search_cache = {}
+
 def get_dict_voces():
   return {
     'Adam': 'pNInz6obpgDQGcFmaJgB',
@@ -62,6 +66,9 @@ def get_dict_voces():
 
 
 def extraer_informacion_audio(ruta):
+    """Extrae información de un archivo de audio utilizando caché."""
+    if ruta in _audio_info_cache:
+        return _audio_info_cache[ruta]
     try:
         audio = MP3(ruta)
         detalles_audio = {
@@ -80,6 +87,7 @@ def extraer_informacion_audio(ruta):
             "frecuencia_muestreo": None,
             "canales": None,
         }
+    _audio_info_cache[ruta] = detalles_audio
     return detalles_audio
 
 
@@ -101,20 +109,22 @@ def get_sonidos_rutas(sonidos_personas, audio_path=AUDIO_PATH, indice=None):
     sonidos_rutas = {}
     for key, v in sonidos_personas.items():
         ls_rutas = []
-        if isinstance(v, list):
-            nombres = v
-        else:
-            nombres = [v]
+        nombres = v if isinstance(v, list) else [v]
 
         for nombre in nombres:
             nombre_agender = nombre.replace(' (man)', '').replace(' (woman)', '') \
                                     .replace(' (men)', '').replace(' (women)', '')
-            if indice is not None:
-                res_ = buscar_en_indice(indice, nombre_agender)
-            else:
-                res_ = buscar_archivos(audio_path, nombre_agender)
 
-            if len(res_) == 0:
+            if nombre_agender in _search_cache:
+                res_ = _search_cache[nombre_agender]
+            else:
+                if indice is not None:
+                    res_ = buscar_en_indice(indice, nombre_agender)
+                else:
+                    res_ = buscar_archivos(audio_path, nombre_agender)
+                _search_cache[nombre_agender] = res_
+
+            if not res_:
                 print(key, ":" if not isinstance(v, list) else ":_", nombre)
             else:
                 ls_rutas.append(extraer_informacion_audio(res_[0]))
