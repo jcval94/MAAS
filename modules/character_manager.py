@@ -22,29 +22,28 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S"
 )
 
-def reflejar_imagenes(df):
-    """
-    Recorre el DataFrame de personajes y, para aquellos cuya columna 'Mirada'
-    sea 'right', crea una versión reflejada horizontalmente. Guarda la nueva
-    imagen con el prefijo 'Correct_'.
-    """
-    for _, row in df.iterrows():
-        if row['Mirada'] == 'right':
-            ruta_imagen = row['Ruta']
-            nombre_imagen = row['Nombre']
-            try:
-                imagen = Image.open(ruta_imagen)
-            except FileNotFoundError:
-                print(f"No se encontró la imagen en la ruta {ruta_imagen}")
-                continue
-            imagen_reflejada = imagen.transpose(Image.FLIP_LEFT_RIGHT)
-            ruta_carpeta, _ = os.path.split(ruta_imagen)
-            nuevo_nombre = 'Correct_' + nombre_imagen.replace('right', 'left')
-            nueva_ruta = os.path.join(ruta_carpeta, nuevo_nombre)
-            if os.path.exists(nueva_ruta):
-                print(f"La imagen ya existe: {nueva_ruta}")
-                continue
-            imagen_reflejada.save(nueva_ruta, 'PNG')
+def reflejar_imagenes(df, max_workers=4):
+    """Genera imágenes reflejadas en paralelo para las filas con mirada 'right'."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def procesar(row):
+        if row['Mirada'] != 'right':
+            return
+        ruta_imagen = row['Ruta']
+        nombre_imagen = row['Nombre']
+        ruta_carpeta, _ = os.path.split(ruta_imagen)
+        nuevo_nombre = 'Correct_' + nombre_imagen.replace('right', 'left')
+        nueva_ruta = os.path.join(ruta_carpeta, nuevo_nombre)
+        if os.path.exists(nueva_ruta):
+            return
+        try:
+            with Image.open(ruta_imagen) as imagen:
+                imagen.transpose(Image.FLIP_LEFT_RIGHT).save(nueva_ruta, 'PNG')
+        except FileNotFoundError:
+            print(f"No se encontró la imagen en la ruta {ruta_imagen}")
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        list(executor.map(procesar, [row for _, row in df.iterrows()]))
 
 
 def get_personajes_features():

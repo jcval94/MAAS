@@ -16,6 +16,7 @@ from moviepy.editor import concatenate_videoclips, AudioFileClip, CompositeAudio
 
 from modules.file_utils import buscar_archivos
 from modules.audio_utils import extraer_informacion_audio
+from modules.character_manager import reflejar_imagenes as reflejar_imagenes_base
 from config import (equivalencias_sentimientos, FONDOS_PATH, 
                     BASE_MEDIA_PATH, PERSONAJES_PATH, AUDIO_PATH,
                     CLIPS_PATH, FONTS_PATH,
@@ -35,74 +36,44 @@ logging.basicConfig(
 )
 
 def zoom_in_effect(clip, zoom_ratio=0.04, start_time=0):
-    """
-    Aplica un efecto de zoom in a un clip de video.
-    
-    Args:
-        clip: Objeto VideoFileClip de moviepy.
-        zoom_ratio: Tasa de aumento del zoom.
-        start_time: Tiempo en segundos a partir del cual iniciar el zoom.
-        
-    Returns:
-        Clip de video modificado con efecto de zoom in.
-    """
+    """Aplica un zoom in usando operaciones con OpenCV."""
+
     def effect(get_frame, t):
+        frame = get_frame(t)
         if t < start_time:
-            return get_frame(t)
+            return frame
         effective_t = t - start_time
-        img = Image.fromarray(get_frame(t))
-        base_size = img.size
-
-        new_size = [
-            math.ceil(base_size[0] * (1 + (zoom_ratio * effective_t))),
-            math.ceil(base_size[1] * (1 + (zoom_ratio * effective_t)))
-        ]
-        # Asegurar que las dimensiones sean pares
-        new_size[0] += new_size[0] % 2
-        new_size[1] += new_size[1] % 2
-
-        img = img.resize(new_size, Image.LANCZOS)
-        x = math.ceil((new_size[0] - base_size[0]) / 2)
-        y = math.ceil((new_size[1] - base_size[1]) / 2)
-        img = img.crop([x, y, new_size[0] - x, new_size[1] - y]).resize(base_size, Image.LANCZOS)
-        return np.array(img)
+        h, w = frame.shape[:2]
+        scale = 1 + zoom_ratio * effective_t
+        new_w, new_h = int(w * scale), int(h * scale)
+        resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
+        x = (new_w - w) // 2
+        y = (new_h - h) // 2
+        return resized[y:y + h, x:x + w]
 
     return clip.fl(effect)
 
 
 def pan_effect(clip, direction="right", pan_ratio=0.01, start_time=0):
-    """
-    Aplica un efecto de paneo (desplazamiento) a un clip de video.
-    
-    Args:
-        clip: Objeto VideoFileClip de moviepy.
-        direction: Dirección del paneo ("left", "right", "up" o "down").
-        pan_ratio: Tasa de desplazamiento en función del tamaño del clip.
-        start_time: Tiempo en segundos a partir del cual iniciar el paneo.
-        
-    Returns:
-        Clip de video modificado con efecto de paneo.
-    """
+    """Aplica un efecto de paneo usando transformaciones afines."""
+
     def effect(get_frame, t):
+        frame = get_frame(t)
         if t < start_time:
-            return get_frame(t)
+            return frame
         effective_t = t - start_time
-        img = Image.fromarray(get_frame(t))
-        base_size = img.size
-
+        h, w = frame.shape[:2]
+        dx = dy = 0
         if direction in ["left", "right"]:
-            pan_length = int(base_size[0] * pan_ratio * effective_t)
+            dx = int(w * pan_ratio * effective_t)
             if direction == "left":
-                pan_length = -pan_length
-            new_box = (pan_length, 0, base_size[0] + pan_length, base_size[1])
-        else:  # Para "up" o "down"
-            pan_length = int(base_size[1] * pan_ratio * effective_t)
+                dx = -dx
+        else:
+            dy = int(h * pan_ratio * effective_t)
             if direction == "up":
-                pan_length = -pan_length
-            new_box = (0, pan_length, base_size[0], base_size[1] + pan_length)
-
-        img = img.crop(new_box).resize(base_size, Image.LANCZOS)
-        return np.array(img)
+                dy = -dy
+        M = np.float32([[1, 0, dx], [0, 1, dy]])
+        return cv2.warpAffine(frame, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
 
     return clip.fl(effect)
 
@@ -970,29 +941,9 @@ def get_folder_content(folder_path):
 
 
 # Definiendo la función que procesa las imágenes
-def reflejar_imagenes(df):
-    for _, row in df.iterrows():
-        if row['Mirada'] == 'right':
-            ruta_imagen = row['Ruta']
-            nombre_imagen = row['Nombre']
-            # Leer la imagen
-            try:
-                imagen = Image.open(ruta_imagen)
-            except FileNotFoundError:
-                print(f"No se encontró la imagen en la ruta {ruta_imagen}")
-                continue
-            # Reflejar la imagen horizontalmente
-            imagen_reflejada = imagen.transpose(Image.FLIP_LEFT_RIGHT)
-            # Construir la nueva ruta con 'Correct_' al principio
-            ruta_carpeta, archivo = os.path.split(ruta_imagen)
-            nuevo_nombre = 'Correct_' + nombre_imagen.replace('right','left')
-            nueva_ruta = os.path.join(ruta_carpeta, nuevo_nombre)
-
-            if os.path.exists(nueva_ruta):
-                print(f"La imagen ya existe: {nueva_ruta}")
-                continue
-            # Guardar la imagen reflejada
-            imagen_reflejada.save(nueva_ruta, 'PNG')
+def reflejar_imagenes(df, max_workers=4):
+    """Delegación al reflejado optimizado definido en character_manager."""
+    reflejar_imagenes_base(df, max_workers=max_workers)
 
 
 def get_personaje_path(personaje, sentimiento, df_personajes, eqqq):

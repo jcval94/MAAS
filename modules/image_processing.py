@@ -52,9 +52,12 @@ def dividir_texto(texto, fuente, limite_ancho):
         return []
     lineas = []
     linea_actual = palabras[0]
+    medir = getattr(fuente, "getlength", None)
+    if medir is None:
+        medir = lambda txt: fuente.getbbox(txt)[2]
     for palabra in palabras[1:]:
-        tamaño = fuente.getmask(linea_actual + ' ' + palabra).getbbox()
-        if tamaño and (tamaño[2] - tamaño[0]) <= limite_ancho:
+        ancho = medir(linea_actual + ' ' + palabra)
+        if ancho <= limite_ancho:
             linea_actual += ' ' + palabra
         else:
             lineas.append(linea_actual)
@@ -120,26 +123,25 @@ def get_txt(pos_fondo, texto, pos_textos, grande=False):
     }]
 
 
-def get_img_transitions(textos_cambio_escena, verbb_ = True,
+def get_img_transitions(textos_cambio_escena, verbb_=True,
                         path=TRANSIC_PATH, prefix=''):
-    resolution = (960, 540)
     resolution = (1920, 1080)
-    img_cambio = []
-    for no_cambio, original_text in textos_cambio_escena.items():
 
-        path_output = CLIPS_PATH+'/'+prefix+'output_%s.png'%(str(no_cambio))
-        path_output_vertical = CLIPS_PATH+'/'+prefix+'output_%s_vertical.png'%(str(no_cambio))
-        final_path__ = get_transicion(original_text, image_size = resolution,
-                                      verbose = verbb_, output_path = path_output,
-                                      horizontal = False, path = path)
+    def build(item):
+        no_cambio, original_text = item
+        path_output = CLIPS_PATH + '/' + prefix + f'output_{no_cambio}.png'
+        path_output_vertical = CLIPS_PATH + '/' + prefix + f'output_{no_cambio}_vertical.png'
+        final_path__ = get_transicion(original_text, image_size=resolution,
+                                      verbose=verbb_, output_path=path_output,
+                                      horizontal=False, path=path)
+        final_path__vertical = get_transicion(original_text, image_size=(resolution[1], resolution[0]),
+                                              verbose=verbb_, output_path=path_output_vertical,
+                                              horizontal=True, path=path)
+        return (final_path__, final_path__vertical)
 
-        final_path__vertical = get_transicion(original_text, image_size = (resolution[1], resolution[0]),
-                                              verbose = verbb_, output_path = path_output_vertical,
-                                              horizontal = True, path = path)
-
-        img_cambio.append((final_path__, final_path__vertical))
-
-    return img_cambio
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor() as executor:
+        return list(executor.map(build, textos_cambio_escena.items()))
 
 
 def get_ttf():

@@ -61,25 +61,13 @@ def limpiar_indices():
     _indices_cache.clear()
 
 def get_folder_content(folder_path):
-    """
-    Obtiene el contenido de una carpeta (archivos y subcarpetas) de forma recursiva
-    y lo retorna ordenado por la fecha de creación.
-    """
+    """Obtiene todos los archivos dentro de una carpeta de forma eficiente."""
     files = []
-    for entry in os.listdir(folder_path):
-        full_path = os.path.join(folder_path, entry)
-        if os.path.isfile(full_path) or os.path.isdir(full_path):
-            files.append(full_path)
-
-    extended_files = []
-    for file in files:
-        if os.path.isdir(file):
-            extended_files.extend(get_folder_content(file))
-        else:
-            extended_files.append(file)
-
-    files_sorted_by_creation = sorted(extended_files, key=os.path.getctime)
-    return files_sorted_by_creation
+    for root, _, filenames in os.walk(folder_path):
+        for name in filenames:
+            files.append(os.path.join(root, name))
+    files.sort(key=os.path.getctime)
+    return files
 
 def move_and_rename_file(file_path, new_directory, new_file_name):
     """
