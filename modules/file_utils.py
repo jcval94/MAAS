@@ -15,18 +15,50 @@ def normalizar_cadena(cadena):
     cadena = ''.join(c for c in unicodedata.normalize('NFKD', cadena) if unicodedata.category(c) != 'Mn')
     return cadena.strip()
 
-def buscar_archivos(directorio, string_busqueda):
-    """
-    Busca de forma recursiva en 'directorio' archivos cuyo nombre contenga 'string_busqueda'
-    (tras normalizar ambos). Retorna una lista de rutas encontradas.
-    """
-    archivos_encontrados = []
-    busq_norm = normalizar_cadena(string_busqueda)
+# ---------------------------------------------------------------------------
+# Búsqueda de archivos con índice en memoria
+# ---------------------------------------------------------------------------
+
+# Caché global de índices: {directorio: {nombre_normalizado: [rutas]}}
+_indices_cache = {}
+
+def construir_indice(directorio):
+    """Construye un índice de nombres normalizados a rutas para 'directorio'."""
+    indice = {}
     for raiz, _, archivos in os.walk(directorio):
         for archivo in archivos:
-            if busq_norm in normalizar_cadena(archivo):
-                archivos_encontrados.append(os.path.join(raiz, archivo))
-    return archivos_encontrados
+            nombre_norm = normalizar_cadena(archivo)
+            ruta = os.path.join(raiz, archivo)
+            indice.setdefault(nombre_norm, []).append(ruta)
+    return indice
+
+def obtener_indice(directorio):
+    """Devuelve el índice en memoria para 'directorio', construyéndolo si es necesario."""
+    if directorio not in _indices_cache:
+        _indices_cache[directorio] = construir_indice(directorio)
+    return _indices_cache[directorio]
+
+def buscar_en_indice(indice, string_busqueda):
+    """Busca archivos en el índice ya construido sin tocar el disco."""
+    busq_norm = normalizar_cadena(string_busqueda)
+    resultados = []
+    for nombre, rutas in indice.items():
+        if busq_norm in nombre:
+            resultados.extend(rutas)
+    return resultados
+
+def buscar_archivos(directorio, string_busqueda):
+    """
+    Busca archivos cuyo nombre contenga 'string_busqueda' en 'directorio'.
+    La primera vez construye y cachea un índice; llamadas posteriores
+    consultan dicho índice sin volver a recorrer el árbol de directorios.
+    """
+    indice = obtener_indice(directorio)
+    return buscar_en_indice(indice, string_busqueda)
+
+def limpiar_indices():
+    """Limpia el caché de índices (utilizado principalmente para pruebas)."""
+    _indices_cache.clear()
 
 def get_folder_content(folder_path):
     """
