@@ -3,6 +3,9 @@
 """
 main.py – Archivo principal para la generación y renderizado de escenas localmente.
 
+Las escenas se procesan de forma concurrente utilizando ``ThreadPoolExecutor``,
+lo que permite acelerar el renderizado manteniendo el orden original.
+
 Este script utiliza configuraciones y variables definidas en config.py, por lo que ya se tienen:
     Posiciones_fondos, Posiciones_personajes, Posiciones_textos
     equivalencias_sentimientos, asociacion_nuevos_sentimientos
@@ -20,6 +23,7 @@ import os
 import time
 import pprint
 import logging
+import concurrent.futures
 
 # Configurar logging básico
 logging.basicConfig(
@@ -55,6 +59,88 @@ from modules.utils import reorganize_dict_by_format, get_sentimientos  # get_sen
 
 # Definir rutas locales adicionales
 FONT_PATH = os.path.join(FONTS_PATH, "Raleway", "Raleway-Medium.ttf")
+
+
+def render_audio_scene(desagregar, personajes_car, onomato_idea, sust_dd):
+    """Renderiza los audios de una escena y prepara datos para el vídeo."""
+
+    escenas_info_, sentimientos, personajes = desagregar
+    escenas_info, Dialogos_onomatos, Dialogos_con_voz, audios_generados, ruta_audios = renderizar_audios(
+        escenas_info_, personajes_car, onomato_idea, personajes, sust_dd)
+    return escenas_info, Dialogos_con_voz, ruta_audios
+
+
+def create_media_scene(no_escena, lugar___, escenas_info, Dialogos_con_voz, ruta_audios,
+                       personajes_car, sonidos_personas, sust_dd, n_chapter):
+    """Genera los clips y rutas asociados a una escena."""
+
+    seg_tiempos = {}
+
+    seg_start = time.perf_counter()
+    equiv_lugares = {
+        f.lower().strip(): f
+        for f in os.listdir(FONDOS_PATH)
+        if os.path.isdir(os.path.join(FONDOS_PATH, f))
+    }
+    lugar_equivalente = equiv_lugares.get(lugar___, lugar___)
+    seg_tiempos['determinar_lugar_equivalente'] = time.perf_counter() - seg_start
+
+    seg_start = time.perf_counter()
+    rutas_vid, clips_ls, rutas_img_text = Create_Scene_Media(
+        escenas_info=escenas_info,
+        lugar=lugar_equivalente,
+        chap_n=n_chapter,
+        gen_vid=False,
+        sounds=sonidos_personas,
+        verbose=True,
+        apply_temblor_effect=True,
+        sust_dd=sust_dd,
+    )
+    seg_tiempos['Create_Scene_Media'] = time.perf_counter() - seg_start
+
+    seg_start = time.perf_counter()
+    def flatten(xss):
+        return [x for xs in xss for x in xs]
+    text_in_img = flatten([list(x.values()) for x in rutas_img_text])
+    seg_tiempos['flatten_text_in_img'] = time.perf_counter() - seg_start
+
+    seg_start = time.perf_counter()
+    clips_ordered, Audio_fondo_activo = ordenar_clips_audio(
+        rutas_vid, clips_ls, text_in_img, personajes_car, ruta_audios, Dialogos_con_voz)
+    seg_tiempos['ordenar_clips_audio'] = time.perf_counter() - seg_start
+
+    seg_start = time.perf_counter()
+    clips_procesados = concatenar_clips_segun_audio(clips_ordered, Audio_fondo_activo)
+    half = len(clips_procesados) // 2
+    clips_procesados_hor = clips_procesados[:half]
+    clips_procesados_ver = clips_procesados[half:]
+    seg_tiempos['concatenar_y_dividir_clips'] = time.perf_counter() - seg_start
+
+    seg_start = time.perf_counter()
+    ruta_audio, output_paths, output_paths_start, rutas_ending = get_paths_save(rutas_vid)
+    seg_tiempos['get_paths_save'] = time.perf_counter() - seg_start
+
+    seg_start = time.perf_counter()
+    key = f'Escena_{no_escena}-{lugar_equivalente}'
+    video = get_chapter_render(
+        [clips_procesados_hor, clips_procesados_ver],
+        ruta_audio,
+        lugar_equivalente,
+        no_escena
+    )
+    seg_tiempos['get_chapter_render'] = time.perf_counter() - seg_start
+
+    return (
+        key,
+        output_paths_start,
+        output_paths,
+        [clips_procesados_hor, clips_procesados_ver],
+        rutas_ending,
+        ruta_audio,
+        video,
+        seg_tiempos,
+    )
+
 
 def main():
     logging.info("========== INICIO DE PROCESO: Generación y Renderizado de Escenas ==========")
@@ -174,7 +260,7 @@ def main():
         # Iniciar contador global para medir tiempos
         logging.info("Iniciando medición de tiempo global.")
         overall_start = time.perf_counter()
-    
+
         # Inicializar estructuras para almacenar resultados
         output_paths_start_ls = {}
         output_paths_ls = {}
@@ -182,113 +268,48 @@ def main():
         rutas_ends_ls = {}
         ruta_audio_ls = {}
         videos_list = {}
-        no_escena = 0
         tiempos_por_escena = {}
-    
-        # Procesar cada escena extraída del script
-        logging.info("Iniciando procesamiento de escenas...")
-        for (desagregar, lugar___) in zip(ESCENAS_, LUGARES_):
+        # Obtener número de capítulo una vez para todas las escenas
+        n_chapter = get_chapter_number(os.path.join(BASE_MEDIA_PATH, "Caps", "BetaV"))
+
+        # Procesar cada escena de forma concurrente
+        logging.info("Iniciando procesamiento de escenas en paralelo...")
+
+        def process_scene(args):
+            idx, desagregar, lugar___ = args
+            logging.info("----- Escena #%d para lugar: %s -----", idx + 1, lugar___)
             escena_start = time.perf_counter()
             seg_tiempos = {}
-    
-            logging.info("----- Escena #%d para lugar: %s -----", no_escena + 1, lugar___)
-            escenas_info_, sentimientos, personajes = desagregar
-    
-            # Segmento 1: Renderizar audios para la escena
             seg_start = time.perf_counter()
-            logging.debug("Renderizando audios de la escena.")
-            escenas_info, Dialogos_onomatos, Dialogos_con_voz, audios_generados, ruta_audios = renderizar_audios(
-                escenas_info_, personajes_car, onomato_idea, personajes, sust_dd)
+            escenas_info, Dialogos_con_voz, ruta_audios = render_audio_scene(desagregar, personajes_car, onomato_idea, sust_dd)
             seg_tiempos['renderizar_audios'] = time.perf_counter() - seg_start
-    
-            # Segmento 2: Obtener número de capítulo
-            seg_start = time.perf_counter()
-            logging.debug("Determinando número de capítulo con get_chapter_number.")
-            if 'n_chapter' not in locals():
-                n_chapter = get_chapter_number(os.path.join(BASE_MEDIA_PATH, "Caps", "BetaV"))
-            seg_tiempos['get_chapter_number'] = time.perf_counter() - seg_start
-    
-            # Segmento 3: Determinar el lugar equivalente en fondos
-            seg_start = time.perf_counter()
-            logging.debug("Buscando lugar equivalente en la carpeta de fondos.")
-            equiv_lugares = {
-                f.lower().strip(): f
-                for f in os.listdir(FONDOS_PATH)
-                if os.path.isdir(os.path.join(FONDOS_PATH, f))
-            }
-            lugar_equivalente = equiv_lugares.get(lugar___, lugar___)
-            seg_tiempos['determinar_lugar_equivalente'] = time.perf_counter() - seg_start
-    
-            # Segmento 4: Crear medios de la escena
-            seg_start = time.perf_counter()
-            logging.debug("Creando escena media (Create_Scene_Media).")
-            rutas_vid, clips_ls, rutas_img_text = Create_Scene_Media(
-                escenas_info=escenas_info,
-                lugar=lugar_equivalente,
-                chap_n=n_chapter,
-                gen_vid=False,
-                sounds=sonidos_personas,
-                verbose=True,              # Muestra logs en consola
-                apply_temblor_effect=True, # Aplica efecto de temblor
-                sust_dd=sust_dd,
-            )
-            seg_tiempos['Create_Scene_Media'] = time.perf_counter() - seg_start
-    
-            # Segmento 5: Procesar textos a partir de imágenes
-            seg_start = time.perf_counter()
-            logging.debug("Extrayendo texto en imágenes.")
-            def flatten(xss):
-                return [x for xs in xss for x in xs]
-            text_in_img = flatten([list(x.values()) for x in rutas_img_text])
-            seg_tiempos['flatten_text_in_img'] = time.perf_counter() - seg_start
-    
-            # Segmento 6: Ordenar clips y audio
-            seg_start = time.perf_counter()
-            logging.debug("Ordenando clips con su audio correspondiente.")
-            clips_ordered, Audio_fondo_activo = ordenar_clips_audio(
-                rutas_vid, clips_ls, text_in_img, personajes_car, ruta_audios, Dialogos_con_voz)
-            seg_tiempos['ordenar_clips_audio'] = time.perf_counter() - seg_start
-    
-            # Segmento 7: Concatenar y dividir clips según audio
-            seg_start = time.perf_counter()
-            logging.debug("Concatenando y dividiendo clips por orientación (horizontal/vertical).")
-            clips_procesados = concatenar_clips_segun_audio(clips_ordered, Audio_fondo_activo)
-            # Dividir mitad y mitad (parte horizontal y parte vertical)
-            half = len(clips_procesados) // 2
-            clips_procesados_hor = clips_procesados[:half]
-            clips_procesados_ver = clips_procesados[half:]
-            seg_tiempos['concatenar_y_dividir_clips'] = time.perf_counter() - seg_start
-    
-            # Segmento 8: Obtener rutas de guardado para el video
-            seg_start = time.perf_counter()
-            logging.debug("Obteniendo rutas de guardado para los videos.")
-            ruta_audio, output_paths, output_paths_start, rutas_ending = get_paths_save(rutas_vid)
-            seg_tiempos['get_paths_save'] = time.perf_counter() - seg_start
-    
-            # Segmento 9: Guardar resultados y generar render final del capítulo
-            seg_start = time.perf_counter()
-            logging.debug("Invocando get_chapter_render y registrando resultados de la escena.")
-            key = f'Escena_{no_escena}-{lugar_equivalente}'
+            (key, output_paths_start, output_paths, clips_procesados,
+             rutas_ending, ruta_audio, video, media_tiempos) = create_media_scene(
+                idx, lugar___, escenas_info, Dialogos_con_voz, ruta_audios,
+                personajes_car, sonidos_personas, sust_dd, n_chapter)
+            seg_tiempos.update(media_tiempos)
+            seg_tiempos['total_por_escena'] = time.perf_counter() - escena_start
+            return (key, output_paths_start, output_paths, clips_procesados,
+                    rutas_ending, ruta_audio, video, seg_tiempos)
+
+        scene_args = [(i, desagregar, lugar___) for i, (desagregar, lugar___) in enumerate(zip(ESCENAS_, LUGARES_))]
+        # Ejecutar el procesamiento de escenas en paralelo. ``ThreadPoolExecutor``
+        # devuelve los resultados en el mismo orden en que se suministran los
+        # argumentos, preservando así la secuencia original de escenas.
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            results = list(executor.map(process_scene, scene_args))
+
+        for res in results:
+            (key, output_paths_start, output_paths, clips_procesados,
+             rutas_ending, ruta_audio, video, seg_tiempos) = res
             output_paths_start_ls[key] = output_paths_start
             output_paths_ls[key] = output_paths
-            clips_list[key] = [clips_procesados_hor, clips_procesados_ver]
+            clips_list[key] = clips_procesados
             rutas_ends_ls[key] = rutas_ending
             ruta_audio_ls[key] = ruta_audio
-            videos_list[key] = get_chapter_render(
-                [clips_procesados_hor, clips_procesados_ver],
-                ruta_audio, lugar_equivalente, no_escena
-            )
-            seg_tiempos['guardar_resultados_y_get_chapter_render'] = time.perf_counter() - seg_start
-    
-            escena_end = time.perf_counter()
-            total_escena = escena_end - escena_start
-            seg_tiempos['total_por_escena'] = total_escena
+            videos_list[key] = video
             tiempos_por_escena[key] = seg_tiempos
-    
-            no_escena += 1
-            logging.info("Escena %d terminada. Tiempo total: %.4f segundos", no_escena, total_escena)
-            for seg, t in seg_tiempos.items():
-                logging.debug("  Segmento %s: %.4f segundos", seg, t)
+            logging.info("Escena %s terminada. Tiempo total: %.4f segundos", key, seg_tiempos['total_por_escena'])
     
         # Final de todas las escenas
         overall_end = time.perf_counter()
